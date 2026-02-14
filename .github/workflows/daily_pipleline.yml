@@ -1,15 +1,9 @@
 name: Daily NS Rail ETL Pipeline
 
-# 触发条件
 on:
-  # 定时任务：每天早上6点（UTC时间）运行
   schedule:
-    - cron: '0 6 * * *'  # 每天6:00 UTC = 7:00 荷兰冬令时 / 8:00 夏令时
-  
-  # 允许手动触发（用于测试）
+    - cron: '0 6 * * *'
   workflow_dispatch:
-  
-  # 每次push到main分支时运行（可选，用于测试）
   push:
     branches: [ main ]
     paths:
@@ -18,63 +12,54 @@ on:
 
 jobs:
   run-etl-pipeline:
-    runs-on: ubuntu-latest  # 使用Ubuntu虚拟机
+    runs-on: ubuntu-latest
     
     steps:
-    # 步骤1: 检出代码
     - name: 📥 Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4  # ✅ 也顺便升级到v4
     
-    # 步骤2: 设置Python环境
     - name: 🐍 Set up Python 3.11
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5  # ✅ 升级到v5
       with:
         python-version: '3.11'
-        cache: 'pip'  # 缓存依赖，加快构建速度
+        cache: 'pip'
     
-    # 步骤3: 安装依赖
     - name: 📦 Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
     
-    # 步骤4: 创建必要的文件夹
     - name: 📁 Create data directories
       run: |
         mkdir -p data/raw
         mkdir -p data/processed
         mkdir -p logs
     
-    # 步骤5: 运行ETL pipeline
     - name: 🚀 Run ETL Pipeline
       env:
-        NS_API_KEY: ${{ secrets.NS_API_KEY }}  # 从GitHub Secrets读取
+        NS_API_KEY: ${{ secrets.NS_API_KEY }}
       run: |
         python src/pipeline.py
     
-    # 步骤6: 上传生成的文件（artifact）
     - name: 💾 Upload pipeline artifacts
-      uses: actions/upload-artifact@v3
-      if: always()  # 即使pipeline失败也上传日志
+      uses: actions/upload-artifact@v4  # ✅ 修复：v3 → v4
+      if: always()
       with:
         name: pipeline-outputs-${{ github.run_number }}
         path: |
           data/processed/*.csv
           logs/*.log
-        retention-days: 7  # 保留7天
+        retention-days: 7
     
-    # 步骤7: 上传数据库（可选）
     - name: 📊 Upload database
-      uses: actions/upload-artifact@v3
-      if: success()  # 只有成功时才上传
+      uses: actions/upload-artifact@v4  # ✅ 修复：v3 → v4
+      if: success()
       with:
         name: nl-rail-database-${{ github.run_number }}
         path: data/nl_rail.db
-        retention-days: 30  # 保留30天
+        retention-days: 30
     
-    # 步骤8: 发送通知（如果失败）
     - name: 📧 Notify on failure
       if: failure()
       run: |
         echo "Pipeline failed! Check the logs for details."
-        # 这里可以添加发送邮件/Slack通知的逻辑
