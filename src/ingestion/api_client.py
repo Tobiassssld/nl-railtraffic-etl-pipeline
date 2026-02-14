@@ -27,7 +27,7 @@ class NSAPIClient:
             raise ValueError("错误！在.env文件里找不到NS_API_KEY")
         
         # NS API的基础网址
-        self.base_url = "https://gateway.apiportal.ns.nl/reisinformatie-api/api/v"
+        self.base_url = "https://gateway.apiportal.ns.nl/reisinformatie-api/api/v3"
         
         # 设置请求头（API要求的格式）
         self.headers = {

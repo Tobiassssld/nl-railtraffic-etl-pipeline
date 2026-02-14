@@ -86,25 +86,22 @@ class DisruptionCleaner:
     def _process_timestamps(self, df):
         """
         步骤2: 处理时间字段
-        
-        NS API返回的时间格式：'2025-02-14T06:30:00+0100'
         """
         print("  ⏰ 处理时间戳...")
         
-        # 转换开始时间
+        # 转换开始时间（统一转成UTC）
         if 'start' in df.columns:
-            df['start_time'] = pd.to_datetime(df['start'], errors='coerce')
+            df['start_time'] = pd.to_datetime(df['start'], errors='coerce', utc=True)
         
         # 转换结束时间
         if 'end' in df.columns:
-            df['end_time'] = pd.to_datetime(df['end'], errors='coerce')
+            df['end_time'] = pd.to_datetime(df['end'], errors='coerce', utc=True)
             
             # 标记进行中的延误（没有结束时间）
             df['is_ongoing'] = df['end_time'].isna()
             
             # 对于进行中的延误，设置临时结束时间为"现在+2小时"
-            # （用于计算持续时间）
-            now = pd.Timestamp.now(tz='Europe/Amsterdam')
+            now = pd.Timestamp.now(tz='UTC')
             df.loc[df['is_ongoing'], 'end_time'] = now + pd.Timedelta(hours=2)
         
         return df
@@ -115,14 +112,18 @@ class DisruptionCleaner:
         """
         print("  🔢 计算业务指标...")
         
-        # 计算持续时间（分钟）
+        # 计算持续时间（分钟）- 使用float64类型
         if 'start_time' in df.columns and 'end_time' in df.columns:
+            valid_times = df['start_time'].notna() & df['end_time'].notna()
+            
+            # 直接用float64类型（支持NaN）
             df['duration_minutes'] = (
                 (df['end_time'] - df['start_time']).dt.total_seconds() / 60
-            ).astype('Int64')  # 使用Int64支持NA值
+            )
             
-            # 修正异常值（持续时间不能为负）
-            df.loc[df['duration_minutes'] < 0, 'duration_minutes'] = pd.NA
+            # 清理无效值
+            df.loc[~valid_times, 'duration_minutes'] = None
+            df.loc[df['duration_minutes'] < 0, 'duration_minutes'] = None
         
         # 计算影响级别（1-5）
         df['impact_level'] = df.apply(self._calculate_impact_level, axis=1)
@@ -152,7 +153,7 @@ class DisruptionCleaner:
         # 应用规则
         if disruption_type == 'calamity':
             return 5
-        elif 'cancel' in disruption_type.lower():
+        elif 'cancel' in str(disruption_type).lower():
             return 5
         elif disruption_type == 'maintenance':
             if duration > 240:  # 4小时
@@ -172,8 +173,6 @@ class DisruptionCleaner:
     def _extract_stations(self, df):
         """
         步骤4: 提取受影响的车站
-        
-        NS API在不同字段返回车站信息，需要智能提取
         """
         print("  🚉 提取受影响车站...")
         
@@ -182,37 +181,45 @@ class DisruptionCleaner:
         for idx, row in df.iterrows():
             stations = set()  # 用set避免重复
             
-            # 方法1: 从'section'字段提取
-            if 'section' in row and pd.notna(row['section']):
-                section = row['section']
-                if isinstance(section, dict):
-                    # 提取起点和终点
-                    if 'stations' in section:
-                        for station in section['stations']:
-                            if isinstance(station, dict) and 'uicCode' in station:
-                                stations.add(station['uicCode'])
+            try:
+                # 方法1: 从'section'字段提取
+                if 'section' in row:
+                    section = row['section']
+                    # 安全的检查方式
+                    if section is not None and not (isinstance(section, float) and pd.isna(section)):
+                        if isinstance(section, dict):
+                            # 提取起点和终点
+                            if 'stations' in section and section['stations']:
+                                for station in section['stations']:
+                                    if isinstance(station, dict) and 'uicCode' in station:
+                                        stations.add(station['uicCode'])
+                
+                # 方法2: 从'timespans'字段提取
+                if 'timespans' in row:
+                    timespans = row['timespans']
+                    if timespans is not None and not (isinstance(timespans, float) and pd.isna(timespans)):
+                        if isinstance(timespans, list):
+                            for timespan in timespans:
+                                if isinstance(timespan, dict) and 'situation' in timespan:
+                                    situation = timespan['situation']
+                                    if isinstance(situation, dict) and 'stations' in situation:
+                                        for station in situation['stations']:
+                                            if isinstance(station, dict):
+                                                code = station.get('stationCode', '')
+                                                if code:
+                                                    stations.add(code)
+                
+                # 方法3: 从title中提取（作为备选）
+                if not stations and 'title' in row:
+                    title = row.get('title', '')
+                    if isinstance(title, str):
+                        # 简单的正则匹配大写字母组合
+                        potential_codes = re.findall(r'\b[A-Z]{2,5}\b', title)
+                        stations.update(potential_codes)
             
-            # 方法2: 从'timespans'字段提取
-            if 'timespans' in row and pd.notna(row['timespans']):
-                timespans = row['timespans']
-                if isinstance(timespans, list):
-                    for timespan in timespans:
-                        if 'situation' in timespan:
-                            situation = timespan['situation']
-                            if 'stations' in situation:
-                                for station in situation['stations']:
-                                    if isinstance(station, dict):
-                                        code = station.get('stationCode', '')
-                                        if code:
-                                            stations.add(code)
-            
-            # 方法3: 从title中提取（作为备选）
-            if not stations and 'title' in row:
-                title = str(row['title'])
-                # 简单的正则匹配大写字母组合（车站代码通常是大写）
-                # 例如："Storing tussen ASD en UTR"
-                potential_codes = re.findall(r'\b[A-Z]{2,5}\b', title)
-                stations.update(potential_codes)
+            except Exception as e:
+                # 单条记录失败不影响整体
+                pass
             
             # 转成逗号分隔的字符串
             affected_stations_list.append(','.join(sorted(stations)) if stations else None)
@@ -223,7 +230,7 @@ class DisruptionCleaner:
     
     def _validate_and_clean(self, df):
         """
-        步骤5: 数据验证和最终清理
+        步骤6: 数据验证和最终清理
         """
         print("  ✓ 验证数据质量...")
         
