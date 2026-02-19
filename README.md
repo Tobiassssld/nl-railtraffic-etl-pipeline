@@ -3,7 +3,7 @@
 > End-to-end data pipeline for Dutch Railways disruption analysis  
 > Python · SQL · SQLite → Azure-ready · GitHub Actions CI/CD · Docker
 
-[![Pipeline Status](https://github.com/yourname/nl-railtraffic-etl-pipeline/actions/workflows/daily_pipleline.yml/badge.svg)](https://github.com/yourname/nl-railtraffic-etl-pipeline/actions)
+[![Pipeline Status](https://github.com/yourname/nl-railtraffic-etl-pipeline/actions/workflows/daily_pipeline.yml/badge.svg)](https://github.com/yourname/nl-railtraffic-etl-pipeline/actions)
 ![Python](https://img.shields.io/badge/Python-3.11-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
