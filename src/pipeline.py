@@ -142,73 +142,76 @@ class ETLPipeline:
     def _save_raw_data(self, raw_data):
         """
         保存原始JSON到数据库
-        
-        使用 INSERT OR IGNORE 避免重复
+        兼容SQLite和Azure SQL
         """
         inserted = 0
         skipped = 0
-        
+
         for item in raw_data:
             try:
                 disruption_id = item.get('id')
                 if not disruption_id:
                     continue
-                
-                # 转成JSON字符串
+
                 raw_json = json.dumps(item, ensure_ascii=False)
-                
-                # 插入数据库（如果已存在则忽略）
-                self.database.cursor.execute("""
-                    INSERT OR IGNORE INTO raw_disruptions 
-                    (disruption_id, raw_json) 
-                    VALUES (?, ?)
-                """, (disruption_id, raw_json))
-                
-                # 检查是否真的插入了（rowcount=1表示插入成功）
-                if self.database.cursor.rowcount > 0:
-                    inserted += 1
+
+                if self.database.mode == 'azure':
+                    # Azure SQL: 先检查存不存在，不存在才插入
+                    self.database.cursor.execute(
+                        "SELECT COUNT(*) FROM raw_disruptions WHERE disruption_id = ?",
+                        (disruption_id,)
+                    )
+                    count = self.database.cursor.fetchone()[0]
+                    if count == 0:
+                        self.database.cursor.execute("""
+                            INSERT INTO raw_disruptions (disruption_id, raw_json)
+                            VALUES (?, ?)
+                        """, (disruption_id, raw_json))
+                        inserted += 1
+                    else:
+                        skipped += 1
                 else:
-                    skipped += 1
-                    
+                    # SQLite: INSERT OR IGNORE
+                    self.database.cursor.execute("""
+                        INSERT OR IGNORE INTO raw_disruptions
+                        (disruption_id, raw_json)
+                        VALUES (?, ?)
+                    """, (disruption_id, raw_json))
+                    if self.database.cursor.rowcount > 0:
+                        inserted += 1
+                    else:
+                        skipped += 1
+
             except Exception as e:
                 self.logger.warning(f"      保存原始数据失败 (ID: {disruption_id}): {e}")
-        
+
         self.database.conn.commit()
         self.logger.info(f"      插入 {inserted} 条，跳过 {skipped} 条重复数据")
+
     
     def _save_cleaned_data(self, df):
         """
         保存清洗后的数据到数据库
-        
-        使用 UPSERT 逻辑：
-        - 如果disruption_id已存在 → 更新
-        - 如果不存在 → 插入
+        兼容SQLite和Azure SQL
         """
         # 确保时间列格式正确
         datetime_columns = ['start_time', 'end_time', 'created_at', 'updated_at']
         for col in datetime_columns:
             if col in df.columns:
-                # 转成字符串格式（SQLite兼容）
                 df[col] = df[col].dt.strftime('%Y-%m-%d %H:%M:%S')
-        
-        # 使用pandas的to_sql方法
-        # if_exists='append': 如果表存在则追加
-        # 但这会导致重复，所以我们用手动的UPSERT
-        
+
         inserted = 0
         updated = 0
-        
+
         for idx, row in df.iterrows():
             try:
-                # 检查记录是否已存在
                 self.database.cursor.execute(
                     "SELECT id FROM disruptions WHERE disruption_id = ?",
                     (row['disruption_id'],)
                 )
                 exists = self.database.cursor.fetchone()
-                
+
                 if exists:
-                    # 更新现有记录
                     self.database.cursor.execute("""
                         UPDATE disruptions SET
                             type = ?,
@@ -235,7 +238,6 @@ class ETLPipeline:
                     ))
                     updated += 1
                 else:
-                    # 插入新记录
                     self.database.cursor.execute("""
                         INSERT INTO disruptions (
                             disruption_id, type, title, description,
@@ -258,10 +260,10 @@ class ETLPipeline:
                         row.get('updated_at')
                     ))
                     inserted += 1
-                    
+
             except Exception as e:
                 self.logger.warning(f"      保存记录失败 (ID: {row['disruption_id']}): {e}")
-        
+
         self.database.conn.commit()
         self.logger.info(f"      插入 {inserted} 条，更新 {updated} 条")
     
