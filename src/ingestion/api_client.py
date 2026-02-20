@@ -6,7 +6,6 @@ from datetime import datetime
 from pathlib import Path
 import os
 from dotenv import load_dotenv
-import os
 from azure.storage.blob import BlobServiceClient
 
 # 加载.env文件里的配置
@@ -42,8 +41,8 @@ class NSAPIClient:
 
         if self.blob_connection_str:
             self.blob_client = BlobServiceClient.from_connection_string(
-        self.blob_connection_str
-        )
+                self.blob_connection_str
+            )
     
     def fetch_disruptions(self, max_retries=3):
         """
