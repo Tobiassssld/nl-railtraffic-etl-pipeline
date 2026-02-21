@@ -282,7 +282,7 @@ class ETLPipeline:
                     AVG(duration_minutes) as avg_duration,
                     MAX(impact_level) as max_impact
                 FROM disruptions
-                WHERE DATE(created_at) = DATE('now')
+                WHERE CAST(created_at AS DATE) = CAST(GETDATE() AS DATE)
             """)
             
             stats = self.database.cursor.fetchone()
