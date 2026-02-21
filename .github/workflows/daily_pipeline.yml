@@ -60,7 +60,15 @@ jobs:
           --start-ip-address ${{ steps.ip.outputs.runner_ip }} \
           --end-ip-address ${{ steps.ip.outputs.runner_ip }}
         echo "Firewall rule created for IP: ${{ steps.ip.outputs.runner_ip }}"
-    
+        
+        
+    - name: Debug - Verify firewall and connectivity
+      run: |
+        echo "Runner IP: ${{ steps.ip.outputs.runner_ip }}"
+        # 测试能否连通Azure SQL的1433端口
+        nc -zv nl-rail-server-tobiasliu.database.windows.net 1433 || echo "Port 1433 not reachable"
+
+        
     - name: Run ETL Pipeline
       env:
         NS_API_KEY: ${{ secrets.NS_API_KEY }}
