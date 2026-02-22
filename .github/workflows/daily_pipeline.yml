@@ -62,11 +62,11 @@ jobs:
         echo "Firewall rule created for IP: ${{ steps.ip.outputs.runner_ip }}"
         
         
-    - name: Debug - Verify firewall and connectivity
+    - name: Wait for firewall rule to propagate
       run: |
-        echo "Runner IP: ${{ steps.ip.outputs.runner_ip }}"
-        # 测试能否连通Azure SQL的1433端口
-        nc -zv nl-rail-server-tobiasliu.database.windows.net 1433 || echo "Port 1433 not reachable"
+        echo "Waiting 30s for Azure firewall rule to propagate..."
+        sleep 30
+        echo "Done, proceeding to pipeline."
 
         
     - name: Run ETL Pipeline
