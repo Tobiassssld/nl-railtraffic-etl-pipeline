@@ -135,9 +135,9 @@ docker-compose -f docker/docker-compose.yml up
 
 ## Roadmap
 
-- [ ] Migrate raw storage to Azure Blob Storage
-- [ ] Switch database connection to Azure SQL (env-var controlled)
-- [ ] Add dbt for transformation layer
-- [ ] Connect Power BI dashboard to Azure SQL
+- [1] Migrate raw storage to Azure Blob Storage
+- [2] Switch database connection to Azure SQL (env-var controlled)
+- [3] Add dbt for transformation layer
+- [4] Connect Power BI dashboard to Azure SQL
 
 ---
