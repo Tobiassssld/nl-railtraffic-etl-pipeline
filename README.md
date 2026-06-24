@@ -1,143 +1,87 @@
 # NL-RailTraffic-ETL-Pipeline
 
-> End-to-end data pipeline for Dutch Railways disruption analysis  
-> Python · SQL · Azure Blob Storage · Azure SQL · GitHub Actions CI/CD · Docker
+Automated pipeline that pulls NS disruption data daily, cleans it, and stores it — making historical analysis possible.
 
 [![Pipeline Status](https://github.com/Tobiassssld/nl-railtraffic-etl-pipeline/actions/workflows/daily_pipeline.yml/badge.svg)](https://github.com/Tobiassssld/nl-railtraffic-etl-pipeline/actions)
 ![Python](https://img.shields.io/badge/Python-3.11-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-
 ---
 
-## Overview
-
-NS (Nederlandse Spoorwegen) publishes real-time disruption data via a public API, but there's no way to query historical patterns without building persistent storage. This project automates the daily collection, cleaning, and storage of that data — making it possible to answer questions like *"which stations are most frequently disrupted?"* or *"is maintenance downtime trending up?"*
-
-The pipeline runs automatically every day via GitHub Actions, processes 100–150 disruption records per run, stores raw JSON in Azure Blob Storage, and loads cleaned data into Azure SQL Database.
-
----
-
-## Tech Stack
+## Stack
 
 | Layer | Technology |
 |---|---|
-| Ingestion | Python `requests` with retry logic |
-| Transformation | `pandas`, custom business logic |
-| Raw Storage | Azure Blob Storage (hierarchical: year/month/day) |
-| Database | Azure SQL Database + SQLite (local dev) |
-| Orchestration | GitHub Actions (daily cron, 06:00 UTC) |
+| Ingestion | Python `requests` |
+| Transformation | `pandas` |
+| Raw Storage | AWS S3 |
+| Database | AWS RDS PostgreSQL |
+| Orchestration | GitHub Actions (daily, 06:00 UTC) |
 | Containerization | Docker |
 
 ---
 
-## Architecture
+## How it works
 
 ```
-GitHub Actions (06:00 UTC daily)
+GitHub Actions (daily)
         │
         ▼
-┌───────────────────────────────────────┐
-│             ETL Pipeline              │
-│                                       │
-│  NS API ──▶ cleaners.py ──▶ Azure    │
-│  (extract)   (transform)   (load)     │
-│                                       │
-│  • Retry with exponential backoff     │
-│  • UPSERT — safe to re-run anytime   │
-│  • Per-record error isolation         │
-└───────────────────────────────────────┘
+  NS API → clean → load
         │
-        ├──▶ Azure Blob Storage
-        │    raw JSON (year/month/day/)
-        │
-        └──▶ Azure SQL Database
-             raw_disruptions   disruptions
-             stations          daily_stats
+        ├── AWS S3          (raw JSON, year/month/day/)
+        └── AWS RDS         (raw_disruptions, disruptions,
+                             stations, daily_stats)
 ```
 
----
-
-## Key Design Decisions
-
-**Idempotent loading** — every run uses UPSERT logic, so re-running never creates duplicates. This matters for scheduled pipelines where retries are common.
-
-**Two-layer storage** — raw JSON is preserved in `raw_disruptions` alongside the cleaned `disruptions` table. This means data can be reprocessed if business logic changes, without re-calling the API.
-
-**Derived impact scoring** — each disruption gets an `impact_level` (1–5) based on type and duration. Business logic lives in Python, not the database, making it easy to adjust.
-
-**Denormalization trade-off** — `affected_stations` is stored as a comma-separated string rather than a junction table. This simplifies the load step; at larger scale a proper many-to-many table would be the right call.
+Each run fetches ~100–150 disruption records. Raw JSON is archived to S3 before any transformation, so data can be reprocessed without re-calling the API. Loads are idempotent — safe to re-run.
 
 ---
 
-## Data Model
+## Data model
 
 ```
-raw_disruptions       disruptions                stations
-────────────────      ─────────────────────────  ────────────────
-id (PK)               id (PK)                    station_code (PK)
-disruption_id (UQ) ──▶disruption_id (UQ, FK)     station_name
-raw_json              type                       latitude
-fetched_at            title                      longitude
-                      start_time
-                      end_time          daily_stats
-                      duration_minutes  ───────────────
-                      impact_level      date (PK)
-                      affected_stations total_disruptions
-                      is_resolved       avg_duration_minutes
-                      created_at        most_affected_station
-                      updated_at        peak_hour
+raw_disruptions       disruptions              stations
+───────────────       ───────────────────────  ─────────────
+disruption_id (UQ) ──▶disruption_id (UQ, FK)  station_code
+raw_json              type / title             station_name
+fetched_at            start_time / end_time    lat / lon
+                      duration_minutes
+                      impact_level (1–5)       daily_stats
+                      affected_stations        ───────────────
+                      is_resolved              date (PK)
+                                               total_disruptions
+                                               avg_duration_minutes
 ```
 
----
-
-## Analytics Queries
-
-`src/transformation/aggregators.py` contains the SQL queries used to generate the `daily_stats` table and answer common business questions. These include:
-
-- 7-day rolling disruption counts (sliding window function)
-- Station severity ranking by percentile (`PERCENT_RANK`)
-- Day-over-day trend detection (`LAG`)
-- Peak hour analysis by type
-
-See the file directly for full queries with comments.
+Impact level is derived from disruption type and duration — logic lives in Python so it's easy to adjust.
 
 ---
 
-## Quick Start
+## Quick start
 
 ```bash
-# Clone and install
-git clone https://github.com/yourname/nl-railtraffic-etl-pipeline
+git clone https://github.com/Tobiassssld/nl-railtraffic-etl-pipeline
 cd nl-railtraffic-etl-pipeline
 pip install -r requirements.txt
 
-# Configure API key (free at apiportal.ns.nl)
 cp .env.example .env
-# Add: NS_API_KEY=your_key_here
+# fill in: NS_API_KEY, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
+#          AWS_RDS_HOST, AWS_RDS_PASSWORD, AWS_S3_BUCKET
 
-# Initialize database
-python src/storage/database.py
-
-# Run pipeline
+python src/storage/database.py   # initialise schema
 python src/pipeline.py
-
-# Query results
-sqlite3 data/nl_rail.db "SELECT * FROM station_disruption_stats LIMIT 10;"
-```
-
-### Docker
-```bash
-docker-compose -f docker/docker-compose.yml up
 ```
 
 ---
 
 ## Roadmap
 
-- [1] Migrate raw storage to Azure Blob Storage
-- [2] Switch database connection to Azure SQL (env-var controlled)
-- [3] Add dbt for transformation layer
-- [4] Connect Power BI dashboard to Azure SQL
-
----
+- [x] NS API ingestion with retry logic
+- [x] Cleaning + impact scoring
+- [x] Raw JSON archive to AWS S3
+- [x] Cleaned data to AWS RDS PostgreSQL
+- [x] Daily automation via GitHub Actions
+- [ ] dbt transformation layer
+- [ ] Power BI dashboard
+- [ ] LLM daily disruption digest
