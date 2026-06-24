@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from datetime import datetime
 import pandas as pd
+import os
 
 from ingestion.api_client import NSAPIClient
 from storage.database import Database
@@ -99,8 +100,12 @@ class ETLPipeline:
             cleaned_df = self.cleaner.clean(raw_data)
             self.logger.info(f"   {len(cleaned_df)} valid records after cleaning.")
 
-            out_path = Path("data/processed") / f"cleaned_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-            out_path.parent.mkdir(parents=True, exist_ok=True)
+            if os.getenv('AWS_LAMBDA_FUNCTION_NAME'):
+                out_path = Path("/tmp") / f"cleaned_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+            else:
+                out_path = Path("data/processed") / f"cleaned_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+
             cleaned_df.to_csv(out_path, index=False, encoding='utf-8-sig')
             self.logger.info(f"   Saved to: {out_path}")
             return cleaned_df
@@ -212,11 +217,6 @@ class ETLPipeline:
             except Exception:
                 return None
 
-        datetime_columns = ['start_time', 'end_time', 'created_at', 'updated_at']
-        for col in datetime_columns:
-            if col in df.columns:
-                df[col] = df[col].apply(_safe_ts)
-
         inserted = updated = 0
 
         for _, row in df.iterrows():
@@ -249,12 +249,12 @@ class ETLPipeline:
                         row.get('type'),
                         row.get('title'),
                         row.get('description'),
-                        row.get('start_time'),
-                        row.get('end_time'),
+                        _safe_ts(row.get('start_time')),
+                        _safe_ts(row.get('end_time')),
                         row.get('duration_minutes') if pd.notna(row.get('duration_minutes')) else None,
                         row.get('impact_level'),
                         row.get('affected_stations'),
-                        row.get('updated_at'),
+                        _safe_ts(row.get('updated_at')),
                         row['disruption_id']
                     ))
                     if self.database.mode == 'postgres':
@@ -273,14 +273,14 @@ class ETLPipeline:
                         row.get('type'),
                         row.get('title'),
                         row.get('description'),
-                        row.get('start_time'),
-                        row.get('end_time'),
+                        _safe_ts(row.get('start_time')),
+                        _safe_ts(row.get('end_time')),
                         row.get('duration_minutes') if pd.notna(row.get('duration_minutes')) else None,
                         row.get('impact_level'),
                         row.get('affected_stations'),
                         bool(row.get('is_resolved', False)),  # int → bool for PostgreSQL
-                        row.get('created_at'),
-                        row.get('updated_at')
+                        _safe_ts(row.get('created_at')),
+                        _safe_ts(row.get('updated_at'))
                     ))
                     if self.database.mode == 'postgres':
                         self.database.cursor.execute("RELEASE SAVEPOINT sp")

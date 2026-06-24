@@ -100,12 +100,14 @@ class NSAPIClient:
         filename = f"disruptions_{timestamp}.json"
         json_content = json.dumps(data, indent=2, ensure_ascii=False)
 
-        # 1. Local save (unchanged)
-        filepath = Path("data/raw") / filename
-        filepath.parent.mkdir(parents=True, exist_ok=True)
-        with open(filepath, 'w', encoding='utf-8') as f:
-            f.write(json_content)
-        print(f" Local:  {filepath}")
+        # 1. Local save — skip when running on Lambda (/tmp is the only writable path,
+        #    and we already have everything in S3)
+        if not os.getenv('AWS_LAMBDA_FUNCTION_NAME'):
+            filepath = Path("data/raw") / filename
+            filepath.parent.mkdir(parents=True, exist_ok=True)
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(json_content)
+            print(f" Local:  {filepath}")
 
         # 2. S3 upload
         # Key format:  2026/06/22/disruptions_20260622_060000.json

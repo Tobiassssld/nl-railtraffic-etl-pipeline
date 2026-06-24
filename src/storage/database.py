@@ -8,9 +8,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# --- Connection parameters read from environment ---
-# These map directly to what you'd pass to psql:
-#   host / port / dbname / user / password
 RDS_HOST     = os.getenv('AWS_RDS_HOST')
 RDS_PORT     = os.getenv('AWS_RDS_PORT', '5432')
 RDS_DBNAME   = os.getenv('AWS_RDS_DBNAME', 'postgres')
@@ -21,19 +18,21 @@ RDS_PASSWORD = os.getenv('AWS_RDS_PASSWORD')
 class Database:
     """
     Database manager with automatic backend selection:
-      - AWS_RDS_HOST set  → PostgreSQL on RDS (psycopg2)
-      - AWS_RDS_HOST unset → local SQLite (for development)
+      - AWS_RDS_HOST set   → PostgreSQL on RDS (pg8000)
+      - AWS_RDS_HOST unset → local SQLite (development fallback)
 
-    psycopg2 uses the same DB-API 2.0 interface as sqlite3, so the
-    cursor.execute() / conn.commit() calls in pipeline.py are identical
-    on both backends. The only differences are:
-      - Connection construction
-      - Placeholder syntax: SQLite uses ?, PostgreSQL uses %s
-      - Schema DDL (SERIAL vs AUTOINCREMENT, NOW() vs CURRENT_TIMESTAMP)
+    pg8000 is a pure-Python PostgreSQL driver — no C extensions,
+    no binary compatibility issues on Lambda.
+    It implements DB-API 2.0, so cursor.execute() / conn.commit()
+    calls in pipeline.py are identical to psycopg2.
+
+    Key parameter differences vs psycopg2:
+      psycopg2 dbname=          → pg8000 database=
+      psycopg2 connect_timeout= → pg8000 timeout=
+      psycopg2 sslmode='require'→ pg8000 ssl_context=True
     """
 
     def __init__(self, db_path="data/nl_rail.db"):
-
         if RDS_HOST and RDS_PASSWORD:
             self._init_postgres()
         else:
@@ -45,34 +44,29 @@ class Database:
 
     def _init_postgres(self, max_retries=3):
         """
-        Connect to PostgreSQL on RDS.
-
-        RDS Free Tier instances can be briefly unavailable after idle
-        periods (similar to Azure SQL Serverless cold-start), so we
-        retry with linear backoff.
+        Connect to PostgreSQL on RDS using pg8000 (pure Python).
+        Retries with linear backoff for cold-start delays.
         """
-        import psycopg2
+        import pg8000.dbapi
 
         self.mode = 'postgres'
-        self.placeholder = '%s'   # PostgreSQL paramstyle
+        self.placeholder = '%s'
 
         for attempt in range(1, max_retries + 1):
             try:
                 print(f"Connecting to RDS PostgreSQL (attempt {attempt}/{max_retries})...")
-                self.conn = psycopg2.connect(
+                self.conn = pg8000.dbapi.connect(
                     host=RDS_HOST,
                     port=int(RDS_PORT),
-                    dbname=RDS_DBNAME,
+                    database=RDS_DBNAME,   # pg8000 uses 'database', not 'dbname'
                     user=RDS_USER,
                     password=RDS_PASSWORD,
-                    connect_timeout=30,
-                    # sslmode=require is the RDS default and enforced
-                    # automatically by psycopg2 when connecting to RDS
-                    sslmode='require'
+                    timeout=30,            # pg8000 uses 'timeout', not 'connect_timeout'
+                    ssl_context=True       # pg8000 uses ssl_context=True for sslmode='require'
                 )
                 self.conn.autocommit = False
                 self.cursor = self.conn.cursor()
-                print(f"Connected to RDS: {RDS_HOST}/{RDS_DBNAME}")
+                print(f"✅ Connected to RDS: {RDS_HOST}/{RDS_DBNAME}")
                 return
             except Exception as e:
                 if attempt < max_retries:
@@ -87,12 +81,12 @@ class Database:
         Fallback: local SQLite for development without cloud credentials.
         """
         self.mode = 'sqlite'
-        self.placeholder = '?'    # SQLite paramstyle
+        self.placeholder = '?'
 
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(db_path)
         self.cursor = self.conn.cursor()
-        print(f"Connected to SQLite: {db_path}")
+        print(f"✅ Connected to SQLite: {db_path}")
 
     # ------------------------------------------------------------------
     # Schema management
@@ -101,33 +95,27 @@ class Database:
     def initialize_schema(self):
         """
         Run schema.sql against the active backend.
-
-        PostgreSQL supports IF NOT EXISTS on CREATE TABLE and CREATE INDEX,
-        so this is safe to call on every startup — it won't recreate
-        existing tables or duplicate indexes.
+        Safe to call on every startup — IF NOT EXISTS prevents duplicates.
         """
         schema_path = Path("src/storage/schema.sql")
         schema_sql = schema_path.read_text(encoding='utf-8')
 
         if self.mode == 'postgres':
-            # psycopg2 doesn't have executescript(); run statements one by one.
-            # Split on semicolons, skip empty strings.
             statements = [s.strip() for s in schema_sql.split(';') if s.strip()]
             for stmt in statements:
                 self.cursor.execute(stmt)
             self.conn.commit()
-            print("PostgreSQL schema initialised.")
+            print("✅ PostgreSQL schema initialised.")
         else:
             self.cursor.executescript(schema_sql)
             self.conn.commit()
-            print("SQLite schema initialised.")
+            print("✅ SQLite schema initialised.")
 
     # ------------------------------------------------------------------
     # Utilities
     # ------------------------------------------------------------------
 
     def show_tables(self):
-        """List tables in the active database."""
         if self.mode == 'postgres':
             self.cursor.execute("""
                 SELECT table_name
