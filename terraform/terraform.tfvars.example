@@ -1,0 +1,2 @@
+# Copy this file to terraform.tfvars and fill in your email
+alert_email = "tobiasl0531@gmail.com"

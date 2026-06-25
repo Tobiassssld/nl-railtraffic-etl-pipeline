@@ -26,3 +26,9 @@ variable "environment" {
   type        = string
   default     = "prod"
 }
+
+variable "s3_bucket" {
+  description = "S3 bucket name for raw data and Athena results"
+  type        = string
+  default     = "nl-rail-raw-disruptions-tl"
+}

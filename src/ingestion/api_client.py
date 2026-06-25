@@ -130,6 +130,47 @@ class NSAPIClient:
                 # same defensive pattern as the Azure version.
                 print(f"  S3 upload failed (continuing): {e}")
 
+            self._save_jsonl_for_athena(data)
+
+    def _save_jsonl_for_athena(self, data):
+        """
+        Write one JSON record per line (JSONL) to the athena/ S3 prefix.
+
+        Athena's JSON SerDe expects each line to be a complete JSON object.
+        Our raw archive uses pretty-printed arrays — fine for archival,
+        but unreadable by Athena. This method writes a separate query-optimised
+        copy without touching the raw archive.
+
+        Path: athena/YYYY/MM/DD/disruptions_<timestamp>.jsonl
+        These path segments become Hive-style partition columns in the Glue table,
+        letting Athena skip entire day-partitions when querying a date range.
+        """
+        if not self.s3_client:
+            return
+        if not isinstance(data, list) or not data:
+            return
+
+        now = datetime.now()
+        timestamp = now.strftime("%Y%m%d_%H%M%S")
+
+        # One compact JSON object per line — no pretty-printing
+        jsonl_lines = [json.dumps(record, ensure_ascii=False) for record in data]
+        jsonl_content = '\n'.join(jsonl_lines)
+
+        s3_key = f"athena/{now.strftime('%Y/%m/%d')}/disruptions_{timestamp}.jsonl"
+
+        try:
+            self.s3_client.put_object(
+                Bucket=self.s3_bucket,
+                Key=s3_key,
+                Body=jsonl_content.encode('utf-8'),
+                ContentType='application/x-ndjson'
+            )
+            print(f"  Athena: s3://{self.s3_bucket}/{s3_key}")
+        except ClientError as e:
+            print(f"  Athena JSONL upload failed (continuing): {e}")
+
+
 
 # ===== Quick smoke test =====
 if __name__ == "__main__":

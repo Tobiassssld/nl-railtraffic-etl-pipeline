@@ -36,3 +36,10 @@ module "monitoring" {
   log_retention_days   = var.log_retention_days
   environment          = var.environment
 }
+
+module "athena" {
+  source = "./modules/athena"
+
+  s3_bucket   = var.s3_bucket
+  environment = var.environment
+}
