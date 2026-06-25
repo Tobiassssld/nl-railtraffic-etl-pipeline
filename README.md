@@ -82,6 +82,11 @@ python src/pipeline.py
 - [x] Raw JSON archive to AWS S3
 - [x] Cleaned data to AWS RDS PostgreSQL
 - [x] Daily automation via GitHub Actions
+- [x] CloudWatch monitoring: Log Group (30-day retention), Metric Filter,
+      3-tier alarm strategy (Lambda errors / application failures / silent
+      failures), SNS email alerting — managed via Terraform
+- [x] Athena query layer: dual-write JSONL to S3, Glue Data Catalog with
+      partition projection, Athena Workgroup with cost guardrails
 - [ ] dbt transformation layer
 - [ ] Power BI dashboard
 - [ ] LLM daily disruption digest
